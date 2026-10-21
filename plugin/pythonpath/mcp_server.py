@@ -292,7 +292,9 @@ class LibreOfficeMCPServer:
                 "properties": {
                     "export_format": {
                         "type": "string",
-                        "enum": ["pdf", "docx", "doc", "odt", "txt", "rtf", "html"],
+                        "enum": ["pdf", "docx", "doc", "odt", "txt", "rtf", "html",
+                                 "xlsx", "xls", "ods", "csv", "pptx", "ppt", "odp",
+                                 "odg", "svg"],
                         "description": "Format to export to"
                     },
                     "file_path": {

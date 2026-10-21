@@ -406,9 +406,10 @@ def save(action: str, file_path: str = None, export_format: str = "pdf") -> dict
     elif action == "export":
         if file_path is None:
             return {"error": "Action 'export' requires parameter 'file_path'"}
+        # NOTE: router param is `export_format`, not `format`.
         return call_libreoffice("/tools/export_document_live", "POST", {
             "file_path": file_path,
-            "format": export_format
+            "export_format": export_format
         })
     else:
         return {"error": f"Invalid action '{action}'", "valid_actions": ["save", "export"]}

@@ -7,6 +7,7 @@ enabling direct manipulation of LibreOffice documents.
 
 import uno
 import unohelper
+import os
 from com.sun.star.beans import PropertyValue
 from typing import Any, Optional, Dict, List
 import logging
@@ -85,7 +86,27 @@ class UNOBridge:
             
             url = url_map.get(doc_type, "private:factory/swriter")
             doc = self.desktop.loadComponentFromURL(url, "_blank", 0, ())
-            logger.info(f"Created new {doc_type} document")
+            # Make the new document the active one: without this, subsequent
+            # tools (insert/set_cell/save on "active document") keep hitting the
+            # previously active document (e.g. the startup --writer frame).
+            # loadComponentFromURL("_blank") opens the doc HIDDEN, so
+            # getCurrentComponent() still returns the old visible doc.
+            # XFrame.activate() is the reliable UNO way to raise it.
+            activated = False
+            try:
+                controller = doc.getCurrentController()
+                if controller is not None:
+                    frame = controller.getFrame()
+                    if frame is not None:
+                        frame.activate()
+                        activated = True
+                        logger.info(f"Activated new {doc_type} document frame")
+            except Exception as e:
+                logger.warning(f"frame.activate() failed: {e}")
+            if not activated:
+                logger.warning(f"Could not activate new {doc_type} document; "
+                               "active-document tools may still target the previous document")
+            logger.info(f"Created new {doc_type} document (activated={activated})")
             return doc
             
         except Exception as e:
@@ -742,10 +763,35 @@ class UNOBridge:
                 return {"success": False, "error": "No document to save"}
             
             if file_path:
-                # Save as new file
+                # Save as new file.
+                # UNO storeAsURL infers the filter from the current document type
+                # (not the file extension), so "file.docx" would silently save an
+                # ODF (.odt) container with a .docx name. Pick an explicit
+                # filter from the target extension so the container type matches.
+                ext = os.path.splitext(file_path)[1].lower().lstrip(".")
+                doc_type = self._get_document_type(doc)
+                ext_filters = {
+                    "writer": {"docx": "MS Word 2007 XML", "doc": "MS Word 97",
+                               "odt": "writer8", "txt": "Text", "rtf": "Rich Text Format",
+                               "html": "HTML (StarWriter)", "pdf": "writer_pdf_Export"},
+                    "calc": {"xlsx": "Calc MS Excel 2007 XML", "xls": "MS Excel 97",
+                             "ods": "calc8", "csv": "Text - txt - csv (StarCalc)",
+                             "txt": "Text", "html": "HTML (StarCalc)", "pdf": "calc_pdf_Export"},
+                    "impress": {"pptx": "Impress MS PowerPoint 2007 XML", "ppt": "MS PowerPoint 97",
+                                "odp": "impress8", "pdf": "impress_pdf_Export"},
+                    "draw": {
+                        "svg": "SVG", "pdf": "draw_pdf_Export", "odg": "draw8"},
+                }
+                filter_name = ext_filters.get(doc_type, {}).get(ext)
                 url = uno.systemPathToFileUrl(file_path)
-                doc.storeAsURL(url, ())
-                logger.info(f"Saved document to {file_path}")
+                if filter_name:
+                    props = (PropertyValue("FilterName", 0, filter_name, 0),
+                             PropertyValue("Overwrite", 0, True, 0))
+                    doc.storeAsURL(url, props)
+                else:
+                    doc.storeAsURL(url, ())
+                logger.info(f"Saved document to {file_path}"
+                             + (f" as {filter_name}" if filter_name else ""))
                 return {"success": True, "message": f"Document saved to {file_path}"}
             else:
                 # Save to current location
@@ -755,7 +801,7 @@ class UNOBridge:
                     return {"success": True, "message": "Document saved"}
                 else:
                     return {"success": False, "error": "Document has no location, specify file_path"}
-                    
+
         except Exception as e:
             logger.error(f"Failed to save document: {e}")
             return {"success": False, "error": str(e)}
@@ -787,7 +833,19 @@ class UNOBridge:
                 'odt': 'writer8',
                 'txt': 'Text',
                 'rtf': 'Rich Text Format',
-                'html': 'HTML (StarWriter)'
+                'html': 'HTML (StarWriter)',
+                # Calc
+                'xlsx': 'Calc MS Excel 2007 XML',
+                'xls': 'MS Excel 97',
+                'ods': 'calc8',
+                'csv': 'Text - txt - csv (StarCalc)',
+                # Impress
+                'pptx': 'Impress MS PowerPoint 2007 XML',
+                'ppt': 'MS PowerPoint 97',
+                'odp': 'impress8',
+                # Draw
+                'odg': 'draw8',
+                'svg': 'SVG',
             }
             
             filter_name = filter_map.get(export_format.lower())
